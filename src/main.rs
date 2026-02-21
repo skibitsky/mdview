@@ -59,6 +59,11 @@ impl App {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
+    if args.iter().any(|a| a == "--version" || a == "-v") {
+        println!("mdview {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let dump = args.iter().any(|a| a == "--dump");
     let width_override = args.iter()
         .position(|a| a == "-w" || a == "--width")

@@ -2,6 +2,10 @@
 name = "mdview"
 version = "0.1.0"
 edition = "2024"
+description = "A terminal markdown viewer"
+license = "MIT"
+homepage = "https://github.com/skibitsky/mdview"
+repository = "https://github.com/skibitsky/mdview"
 
 [dependencies]
 anyhow = "1"
