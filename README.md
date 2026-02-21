@@ -14,15 +14,16 @@ Built because `glow`, `mdcat`, and friends don't handle tables well, and I wante
 
 ## Installation
 
+### Homebrew
+
 ```bash
-cargo install --path .
+brew install skibitsky/tap/mdview
 ```
 
-Or build from source:
+### From source
 
 ```bash
-cargo build --release
-# binary at target/release/mdview
+cargo install --path .
 ```
 
 ## Usage
