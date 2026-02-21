@@ -21,6 +21,16 @@ use ratatui::text::Text;
 
 use render::render_markdown;
 
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
+struct TerminalGuard;
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = io::stdout().execute(LeaveAlternateScreen);
+    }
+}
+
 struct App {
     text: Text<'static>,
     scroll: u16,
@@ -34,7 +44,7 @@ impl App {
     }
 
     fn scroll_down(&mut self, n: u16) {
-        self.scroll = (self.scroll + n).min(self.max_scroll());
+        self.scroll = self.scroll.saturating_add(n).min(self.max_scroll());
     }
 
     fn scroll_up(&mut self, n: u16) {
@@ -72,6 +82,15 @@ fn main() -> Result<()> {
         .canonicalize()
         .with_context(|| format!("Cannot resolve path: {}", path.display()))?;
 
+    let meta = std::fs::metadata(&path)
+        .with_context(|| format!("Cannot stat {}", path.display()))?;
+    anyhow::ensure!(
+        meta.len() <= MAX_FILE_SIZE,
+        "File too large ({} bytes, max {} bytes)",
+        meta.len(),
+        MAX_FILE_SIZE
+    );
+
     let mut content = std::fs::read_to_string(&path)
         .with_context(|| format!("Cannot read {}", path.display()))?;
 
@@ -79,9 +98,8 @@ fn main() -> Result<()> {
         return dump_text(&content, width_override);
     }
 
-    install_panic_hook();
-
     enable_raw_mode()?;
+    let _guard = TerminalGuard;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -98,9 +116,10 @@ fn main() -> Result<()> {
     let _watcher = watch::setup(&path, tx)?;
 
     loop {
+        app.viewport_height = terminal.size()?.height;
+
         terminal.draw(|f| {
             let area = f.area();
-            app.viewport_height = area.height;
 
             let paragraph = Paragraph::new(app.text.clone())
                 .wrap(Wrap { trim: false })
@@ -116,11 +135,16 @@ fn main() -> Result<()> {
 
         if rx.try_recv().is_ok() {
             while rx.try_recv().is_ok() {}
-            if let Ok(new_content) = std::fs::read_to_string(&path) {
-                content = new_content;
-                render_width = terminal.size()?.width;
-                app.text = render_markdown(&content, render_width);
-                app.clamp_scroll();
+            let size_ok = std::fs::metadata(&path)
+                .map(|m| m.len() <= MAX_FILE_SIZE)
+                .unwrap_or(false);
+            if size_ok {
+                if let Ok(new_content) = std::fs::read_to_string(&path) {
+                    content = new_content;
+                    render_width = terminal.size()?.width;
+                    app.text = render_markdown(&content, render_width);
+                    app.clamp_scroll();
+                }
             }
         }
 
@@ -158,8 +182,7 @@ fn main() -> Result<()> {
         }
     }
 
-    disable_raw_mode()?;
-    io::stdout().execute(LeaveAlternateScreen)?;
+    drop(_guard);
     Ok(())
 }
 
@@ -260,15 +283,6 @@ fn color_to_ansi_bg(color: ratatui::style::Color) -> Option<String> {
         Color::Indexed(i) => Some(format!("48;5;{i}")),
         _ => None,
     }
-}
-
-fn install_panic_hook() {
-    let original = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let _ = disable_raw_mode();
-        let _ = io::stdout().execute(LeaveAlternateScreen);
-        original(info);
-    }));
 }
 
 fn render_scrollbar(f: &mut ratatui::Frame, area: Rect, scroll: u16, max_scroll: u16) {

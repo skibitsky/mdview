@@ -7,7 +7,7 @@ use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
 pub fn setup(path: &Path, tx: Sender<()>) -> Result<impl Watcher> {
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
-            if matches!(event.kind, EventKind::Modify(_)) {
+            if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                 let _ = tx.send(());
             }
         }

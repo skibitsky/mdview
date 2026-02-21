@@ -115,7 +115,11 @@ impl Renderer {
                 Event::HardBreak => self.hard_break(),
                 Event::Rule => self.rule(),
                 Event::TaskListMarker(checked) => self.task_marker(checked),
-                _ => {}
+                Event::Html(html) => self.raw_html(&html),
+                Event::InlineHtml(html) => self.inline_raw_html(&html),
+                Event::FootnoteReference(label) => self.footnote_ref(&label),
+                Event::InlineMath(math) => self.math(&math),
+                Event::DisplayMath(math) => self.display_math(&math),
             }
         }
         self.flush_line();
@@ -394,6 +398,46 @@ impl Renderer {
         ));
     }
 
+    fn raw_html(&mut self, html: &str) {
+        self.flush_line();
+        for line in html.lines() {
+            self.lines.push(Line::styled(
+                line.to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+    }
+
+    fn inline_raw_html(&mut self, html: &str) {
+        self.spans.push(Span::styled(
+            html.to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
+
+    fn footnote_ref(&mut self, label: &str) {
+        self.spans.push(Span::styled(
+            format!("[{label}]"),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+
+    fn math(&mut self, math: &str) {
+        self.spans.push(Span::styled(
+            math.to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
+        ));
+    }
+
+    fn display_math(&mut self, math: &str) {
+        self.flush_line();
+        self.lines.push(Line::styled(
+            math.to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
+        ));
+        self.push_blank();
+    }
+
     fn render_table(&mut self) {
         let num_cols = self.table_header.len();
         if num_cols == 0 {
@@ -501,7 +545,7 @@ fn budget_columns(natural: &[usize], terminal_width: usize) -> Vec<usize> {
             let mut leftover = budget % remaining.len().max(1);
             for &i in &remaining {
                 let extra = if leftover > 0 { leftover -= 1; 1 } else { 0 };
-                widths[i] = (share + extra).max(min_col);
+                widths[i] = share + extra;
             }
             break;
         }
@@ -782,8 +826,8 @@ fn build_wrapped_row(
                 for span in cell_spans {
                     let mut s = span.style;
                     if let Some(bg) = bg_style {
-                        if span.style.bg.is_none() {
-                            s = s.bg(bg.bg.unwrap());
+                        if let (None, Some(bg_color)) = (span.style.bg, bg.bg) {
+                            s = s.bg(bg_color);
                         }
                     }
                     spans.push(Span::styled(span.content.clone().into_owned(), s));
@@ -1080,5 +1124,96 @@ mod tests {
 
         assert!(plain.contains('🎉'), "Unicode emoji should pass through");
         assert!(plain.contains("中文"), "CJK characters should pass through");
+    }
+
+    // --- budget_columns ---
+
+    #[test]
+    fn test_budget_natural_fits() {
+        let natural = vec![10, 15, 8];
+        let result = budget_columns(&natural, 80);
+        assert_eq!(result, natural);
+    }
+
+    #[test]
+    fn test_budget_narrow_terminal() {
+        let natural = vec![20, 30, 25];
+        let width = 40;
+        let result = budget_columns(&natural, width);
+        let chrome = natural.len() * 3 + 1;
+        let total: usize = result.iter().sum();
+        assert!(
+            total <= width - chrome,
+            "Total {total} exceeds available {} (width {width} - chrome {chrome})",
+            width - chrome
+        );
+    }
+
+    #[test]
+    fn test_budget_many_columns_tiny_terminal() {
+        let natural = vec![10, 10, 10, 10, 10];
+        let width = 30;
+        let result = budget_columns(&natural, width);
+        let chrome = natural.len() * 3 + 1;
+        let total: usize = result.iter().sum();
+        assert!(
+            total <= width.saturating_sub(chrome),
+            "Total {total} must not exceed available {}",
+            width.saturating_sub(chrome)
+        );
+    }
+
+    #[test]
+    fn test_budget_single_column() {
+        let natural = vec![50];
+        let width = 30;
+        let result = budget_columns(&natural, width);
+        let chrome = 1 * 3 + 1;
+        assert_eq!(result[0], width - chrome);
+    }
+
+    #[test]
+    fn test_budget_small_and_large_mix() {
+        let natural = vec![3, 50, 4];
+        let width = 40;
+        let result = budget_columns(&natural, width);
+        let chrome = natural.len() * 3 + 1;
+        let total: usize = result.iter().sum();
+        assert!(total <= width - chrome);
+        assert_eq!(result[0], 5, "Small column locks at min_col");
+        assert_eq!(result[2], 5, "Small column locks at min_col");
+    }
+
+    // --- wrap_cell_spans ---
+
+    #[test]
+    fn test_wrap_fits_one_line() {
+        let spans = vec![Span::raw("hello")];
+        let result = wrap_cell_spans(&spans, 10, 5, Style::default());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].iter().map(|s| s.content.as_ref()).collect::<String>(), "hello");
+    }
+
+    #[test]
+    fn test_wrap_at_word_boundary() {
+        let spans = vec![Span::raw("hello world foo")];
+        let result = wrap_cell_spans(&spans, 10, 5, Style::default());
+        assert!(result.len() >= 2, "Should wrap into multiple lines");
+    }
+
+    #[test]
+    fn test_wrap_truncation_ellipsis() {
+        let spans = vec![Span::raw("one two three four five six seven eight nine ten")];
+        let result = wrap_cell_spans(&spans, 8, 2, Style::default());
+        assert_eq!(result.len(), 2);
+        let last_line: String = result.last().unwrap().iter().map(|s| s.content.as_ref()).collect();
+        assert!(last_line.contains('…'), "Truncated line should end with ellipsis");
+    }
+
+    #[test]
+    fn test_wrap_empty_input() {
+        let spans: Vec<Span<'static>> = vec![];
+        let result = wrap_cell_spans(&spans, 10, 5, Style::default());
+        assert_eq!(result.len(), 1, "Empty input should produce one empty line");
     }
 }
