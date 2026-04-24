@@ -1,5 +1,5 @@
 use ratatui::text::Text;
-use unicode_width::UnicodeWidthStr;
+use ratatui::widgets::{Paragraph, Wrap};
 
 pub struct App {
     pub text: Text<'static>,
@@ -12,18 +12,9 @@ pub fn wrapped_row_count(text: &Text<'_>, width: u16) -> u32 {
     if width == 0 {
         return text.lines.len() as u32;
     }
-    let w = width as u32;
-    text.lines
-        .iter()
-        .map(|line| {
-            let display: u32 = line
-                .spans
-                .iter()
-                .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u32)
-                .sum();
-            if display == 0 { 1 } else { display.div_ceil(w) }
-        })
-        .sum()
+    Paragraph::new(text.clone())
+        .wrap(Wrap { trim: false })
+        .line_count(width) as u32
 }
 
 impl App {
@@ -95,7 +86,15 @@ mod tests {
             Span::raw("hello "),
             Span::raw("world"),
         ])]);
-        assert_eq!(wrapped_row_count(&text, 4), 3);
+        assert_eq!(wrapped_row_count(&text, 4), 4);
+    }
+
+    #[test]
+    fn wrapped_row_count_exceeds_naive_ceiling_for_word_boundaries() {
+        let text = Text::from(vec![Line::from(Span::raw(
+            "one two three four five six seven eight",
+        ))]);
+        assert_eq!(wrapped_row_count(&text, 10), 5);
     }
 
     #[test]
