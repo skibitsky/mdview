@@ -1,7 +1,3 @@
-mod highlight;
-mod render;
-mod watch;
-
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -17,9 +13,10 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Terminal;
-use ratatui::text::Text;
 
-use render::render_markdown;
+use mdview::render::render_markdown;
+use mdview::scroll::App;
+use mdview::watch;
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
@@ -28,31 +25,6 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = io::stdout().execute(LeaveAlternateScreen);
-    }
-}
-
-struct App {
-    text: Text<'static>,
-    scroll: u16,
-    viewport_height: u16,
-}
-
-impl App {
-    fn max_scroll(&self) -> u16 {
-        let content_height = (self.text.height() as u32).min(u16::MAX as u32) as u16;
-        content_height.saturating_sub(self.viewport_height)
-    }
-
-    fn scroll_down(&mut self, n: u16) {
-        self.scroll = self.scroll.saturating_add(n).min(self.max_scroll());
-    }
-
-    fn scroll_up(&mut self, n: u16) {
-        self.scroll = self.scroll.saturating_sub(n);
-    }
-
-    fn clamp_scroll(&mut self) {
-        self.scroll = self.scroll.min(self.max_scroll());
     }
 }
 
@@ -110,11 +82,11 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let size = terminal.size()?;
-    let mut render_width = size.width;
     let mut app = App {
-        text: render_markdown(&content, render_width),
+        text: render_markdown(&content, size.width),
         scroll: 0,
         viewport_height: size.height,
+        render_width: size.width,
     };
 
     let (tx, rx) = mpsc::channel();
@@ -146,8 +118,8 @@ fn main() -> Result<()> {
             if size_ok {
                 if let Ok(new_content) = std::fs::read_to_string(&path) {
                     content = new_content;
-                    render_width = terminal.size()?.width;
-                    app.text = render_markdown(&content, render_width);
+                    app.render_width = terminal.size()?.width;
+                    app.text = render_markdown(&content, app.render_width);
                     app.clamp_scroll();
                 }
             }
@@ -176,9 +148,9 @@ fn main() -> Result<()> {
                 },
                 Event::Resize(w, h) => {
                     app.viewport_height = h;
-                    if w != render_width {
-                        render_width = w;
-                        app.text = render_markdown(&content, render_width);
+                    if w != app.render_width {
+                        app.render_width = w;
+                        app.text = render_markdown(&content, app.render_width);
                     }
                     app.clamp_scroll();
                 }
